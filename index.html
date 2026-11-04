@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Scout Adventure - MAN 1 Boalemo</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel (JSX Compiler) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tambahan Script (Tema, Download Sertifikat & Efek) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #0B1120; 
+            color: #fff; 
+            margin: 0; 
+            padding: 0; 
+        }
+        .glass-header { 
+            background: rgba(2, 6, 23, 0.7); 
+            backdrop-filter: blur(12px); 
+            -webkit-backdrop-filter: blur(12px); 
+            border-bottom: 1px solid rgba(234, 179, 8, 0.2); 
+        }
+        .pulse-sos { animation: pulse-sos 2s infinite; }
+        @keyframes pulse-sos {
+            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+        .animate-fade-in-up { animation: fadeInUp 0.5s ease-out forwards; }
+        @keyframes fadeInUp { 
+            from { opacity: 0; transform: translateY(20px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+        .fire-flicker { animation: flicker 3s infinite alternate; }
+        @keyframes flicker { 
+            0%, 100% { opacity: 1; transform: scale(1); } 
+            50% { opacity: 0.8; transform: scale(1.05); } 
+        }
+        .floating { animation: float 6s ease-in-out infinite; }
+        @keyframes float { 
+            0%, 100% { transform: translateY(0); } 
+            50% { transform: translateY(-10px); } 
+        }
+        .map-line { stroke-dasharray: 5; animation: dash 20s linear infinite; }
+        @keyframes dash { to { stroke-dashoffset: -100; } }
+        
+        /* Mode Hemat Baterai (Mematikan Animasi) */
+        .battery-saver *, .battery-saver *::before, .battery-saver *::after {
+            animation: none !important;
+            transition: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // ============================================================
+        // KONFIGURASI: tempel URL Web App Google Apps Script Anda di bawah
+        // (hasil Deploy > Web app, berakhiran /exec)
+        // ============================================================
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbyLcMffri9XqvuCCnsl5j7c4fACEvjnzDXS8W32QWf2vdMJsMJjaQiGB9X3L0XYb_xgFA/exec";
+
+        const { useState, useEffect, useRef } = React;
+
+        // Data Pos Default
+        const defaultCheckpoints = [
+            { id: 1, title: 'Gerbang Penjelajah', desc: 'Berdoa sebelum perjalanan dimulai dan siapkan perlengkapan.', unlockCode: 'POS-1-MULAI', points: 100 },
+            { id: 2, title: 'Jejak Pramuka', desc: 'Identifikasi tanda jejak dan pelestarian alam.', unlockCode: 'POS-2-JEJAK', points: 100 },
+            { id: 3, title: 'Rahasia Sandi', desc: 'Pecahkan sandi kotak dan rumput.', unlockCode: 'POS-3-SANDI', points: 100 },
+            { id: 4, title: 'Navigasi Kiblat', desc: 'Gunakan kompas untuk mencari arah utara dan Kiblat.', unlockCode: 'POS-4-ARAH', points: 100 },
+            { id: 5, title: 'Kecakapan & P3K', desc: 'Simulasi P3K dan foto penanganan.', unlockCode: 'POS-5-TOLONG', points: 150 },
+            { id: 6, title: 'Misi Dasa Darma', desc: 'Studi kasus interaktif Dasa Darma dalam kehidupan.', unlockCode: 'POS-6-DARMA', points: 100 },
+            { id: 7, title: 'Harta Karun', desc: 'Gabungkan semua petunjuk untuk menemukan lokasi akhir.', unlockCode: 'POS-7-AKHIR', points: 200 }
+        ];
+
+        // ===== LAYER KONEKSI GOOGLE SHEETS (via Google Apps Script) =====
+        // Jika GAS_URL belum diisi, aplikasi berjalan seperti semula (mode lokal / demo).
+        const GAS_READY = /^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\//.test(GAS_URL);
+        const LS = {
+            get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+            set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+        };
+        // POST memakai text/plain agar tidak memicu preflight CORS (cara resmi yang aman untuk GAS)
+        async function gasPost(body) {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 20000);
+            try {
+                const res = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body), signal: ctrl.signal });
+                return await res.json();
+            } finally { clearTimeout(t); }
+        }
+        async function gasGet(params) {
+            const res = await fetch(GAS_URL + '?' + new URLSearchParams(params));
+            return await res.json();
+        }
+        async function sha256Hex(s) {
+            const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+            return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // Dashboard Pembina / Panel Panitia (data langsung dari Google Sheets)
+        function AdminPanel({ auth, canAdmin, notify }) {
+            const [tab, setTab] = useState('MONITOR');
+            const [d, setD] = useState(null);
+            const [busy, setBusy] = useState(false);
+            const [vf, setVf] = useState({ regu: '', pos: 1, poin: 0, cat: '' });
+            const [rf, setRf] = useState({ nama: '', ketua: '', anggota: '', pin: '' });
+            const [posEdit, setPosEdit] = useState([]);
+            const card = 'bg-white/80 dark:bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-200 dark:border-slate-700/60 shadow-lg';
+            const inp = 'w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 px-3 py-2.5 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500';
+            const btn = 'px-4 py-2.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition disabled:opacity-50';
+            const call = (op, extra) => gasPost({ action: 'admin', op, pin: auth.pin, ...extra });
+            const load = async (force) => {
+                try {
+                    const r = await call('monitor');
+                    if (r.ok) { setD(r); setPosEdit(p => (force || p.length === 0) ? r.pos : p); }
+                    else notify(r.msg || 'Gagal memuat data.', 'error');
+                } catch (e) { /* dicoba lagi pada siklus berikutnya */ }
+            };
+            useEffect(() => { load(true); const iv = setInterval(() => load(false), 15000); return () => clearInterval(iv); }, []);
+            const act = async (op, extra, okMsg) => {
+                setBusy(true);
+                try {
+                    const r = await call(op, extra);
+                    if (r.ok) { notify(okMsg, 'success'); await load(true); return true; }
+                    notify(r.msg || 'Gagal menyimpan.', 'error');
+                } catch (e) { notify('Gagal terhubung ke server.', 'error'); }
+                finally { setBusy(false); }
+                return false;
+            };
+            const tabs = [['MONITOR', 'Pemantauan', 'fa-satellite-dish'], ['VALIDASI', 'Validasi Pos', 'fa-clipboard-check'], ['SOS', 'SOS', 'fa-triangle-exclamation']]
+                .concat(canAdmin ? [['ATUR', 'Pengaturan', 'fa-sliders']] : []);
+            const sosNew = d ? d.sos.filter(s => s.status !== 'DITANGANI').length : 0;
+            const reguSel = vf.regu || (d && d.teams[0] ? d.teams[0].name : '');
+            const upPos = (id, k, v) => setPosEdit(posEdit.map(x => x.id === id ? { ...x, [k]: v } : x));
+
+            return (
+                <div className="space-y-4 animate-fade-in-up">
+                    <div className={card + ' flex flex-wrap items-center justify-between gap-3'}>
+                        <div>
+                            <h2 className="text-xl font-black text-slate-900 dark:text-white"><i className="fa-solid fa-laptop-code text-emerald-500 mr-2"></i>{canAdmin ? 'Panel Panitia' : 'Dashboard Pembina'}</h2>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">Data langsung dari Google Sheets • refresh otomatis tiap 15 detik</p>
+                        </div>
+                        {d && (
+                            <div className="flex flex-wrap gap-2 text-[11px] font-bold">
+                                <span className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-800">{d.teams.length} regu</span>
+                                <span className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">{d.teams.filter(t => t.completed.length === 7).length} selesai</span>
+                                <span className={'px-2.5 py-1 rounded-lg ' + (sosNew ? 'bg-red-600 text-white pulse-sos' : 'bg-slate-200 dark:bg-slate-800')}>{sosNew} SOS baru</span>
+                                <span className="px-2.5 py-1 rounded-lg bg-yellow-100 dark:bg-yellow-500/20 text-yellow-700 dark:text-yellow-400">{d.status}</span>
+                            </div>
+                        )}
+                        <button onClick={() => load(true)} className="px-3 py-2 bg-slate-200 dark:bg-slate-800 rounded-lg text-xs" title="Muat ulang"><i className="fa-solid fa-rotate"></i></button>
+                    </div>
+
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                        {tabs.map(([k, label, ic]) => (
+                            <button key={k} onClick={() => setTab(k)} className={'px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-2 transition ' + (tab === k ? 'bg-yellow-500 text-slate-950 shadow-lg' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300')}>
+                                <i className={'fa-solid ' + ic}></i>{label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {!d && <div className={card + ' text-center text-sm text-slate-500'}>Memuat data...</div>}
+
+                    {d && tab === 'MONITOR' && (
+                        <div className="space-y-3">
+                            {d.teams.length === 0 && <div className={card + ' text-center text-sm text-slate-500'}>Belum ada regu terdaftar.</div>}
+                            {d.teams.map((t, i) => (
+                                <div key={t.name} className={card}>
+                                    <div className="flex items-center gap-3">
+                                        <span className="w-9 h-9 rounded-full bg-yellow-400 text-slate-900 font-black flex items-center justify-center text-sm shrink-0">{i + 1}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-bold text-slate-900 dark:text-white truncate">{t.name}</div>
+                                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Ketua: {t.leader || '-'} • Aktif: {t.last || 'belum ada'}{t.finish ? ' • Selesai ' + t.finish : ''}</div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <div className="font-black text-emerald-600 dark:text-emerald-400">{t.points} PTS</div>
+                                            <div className="text-[10px] text-slate-500">{t.completed.length}/7 pos</div>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-1.5 mt-3">
+                                        {[1, 2, 3, 4, 5, 6, 7].map(n => (
+                                            <div key={n} className={'flex-1 h-8 rounded-lg flex items-center justify-center text-xs font-bold ' + (t.completed.includes(n) ? 'bg-emerald-500 text-white' : t.unlocked.includes(n) ? 'bg-yellow-400 text-slate-900' : 'bg-slate-200 dark:bg-slate-800 text-slate-400')}>{n}</div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                            <p className="text-[10px] text-slate-500 text-center">Hijau = selesai • Kuning = terbuka • Abu-abu = terkunci</p>
+                        </div>
+                    )}
+
+                    {d && tab === 'VALIDASI' && (
+                        <div className="grid md:grid-cols-2 gap-4">
+                            <div className={card + ' space-y-3'}>
+                                <h3 className="font-black text-slate-900 dark:text-white">Penilaian Penjaga Pos</h3>
+                                <select className={inp} value={reguSel} onChange={e => setVf({ ...vf, regu: e.target.value })}>
+                                    {d.teams.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                                </select>
+                                <select className={inp} value={vf.pos} onChange={e => setVf({ ...vf, pos: Number(e.target.value) })}>
+                                    {d.pos.map(p => <option key={p.id} value={p.id}>Pos {p.id} - {p.title}</option>)}
+                                </select>
+                                <input type="number" className={inp} value={vf.poin} onChange={e => setVf({ ...vf, poin: e.target.value })} placeholder="Poin tambahan / pengurangan (mis. 25 atau -10)" />
+                                <textarea className={inp} rows="2" value={vf.cat} onChange={e => setVf({ ...vf, cat: e.target.value })} placeholder="Catatan (mis. foto P3K sudah benar)"></textarea>
+                                <button disabled={busy || !reguSel} className={btn + ' w-full'} onClick={async () => { if (await act('bonus', { regu: reguSel, pos: vf.pos, poin: vf.poin, cat: vf.cat }, 'Penilaian tersimpan.')) setVf({ ...vf, poin: 0, cat: '' }); }}>
+                                    <i className="fa-solid fa-floppy-disk mr-2"></i>Simpan Penilaian
+                                </button>
+                            </div>
+                            <div className={card + ' space-y-2'}>
+                                <h3 className="font-black text-slate-900 dark:text-white">Kode Akses Pos</h3>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">Berikan kode ini kepada regu setelah mereka tiba di pos.</p>
+                                {d.pos.map(p => (
+                                    <div key={p.id} className="flex items-center justify-between gap-2 text-sm border-b border-slate-200 dark:border-slate-700/60 pb-2">
+                                        <span className="font-semibold text-slate-700 dark:text-slate-200">Pos {p.id}: {p.title}</span>
+                                        <code className="px-2 py-1 rounded-lg bg-yellow-100 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 font-black text-xs">{p.code}</code>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {d && tab === 'SOS' && (
+                        <div className="space-y-3">
+                            {d.sos.length === 0 && <div className={card + ' text-center text-sm text-slate-500'}>Belum ada panggilan SOS.</div>}
+                            {d.sos.map(s => (
+                                <div key={s.id} className={card + ' flex flex-wrap items-center justify-between gap-3 ' + (s.status !== 'DITANGANI' ? '!border-red-400 dark:!border-red-500/60' : '')}>
+                                    <div>
+                                        <div className="font-black text-slate-900 dark:text-white"><i className="fa-solid fa-triangle-exclamation text-red-500 mr-2"></i>{s.regu} <span className="text-xs font-semibold text-slate-500">• Pos {s.pos || '-'} • {s.t}</span></div>
+                                        {s.loc && s.loc.startsWith('https://') && <a href={s.loc} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 dark:text-blue-400 underline">Lihat lokasi di peta</a>}
+                                    </div>
+                                    {s.status !== 'DITANGANI'
+                                        ? <button disabled={busy} onClick={() => act('sosDone', { id: s.id }, 'SOS ditandai ditangani.')} className={btn}>Tandai Ditangani</button>
+                                        : <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">✔ Ditangani</span>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {d && tab === 'ATUR' && canAdmin && (
+                        <div className="space-y-4">
+                            <div className={card + ' flex flex-wrap items-center gap-3'}>
+                                <h3 className="font-black text-slate-900 dark:text-white">Status Permainan</h3>
+                                <select className={inp + ' !w-auto'} value={d.status} onChange={e => act('status', { value: e.target.value }, 'Status permainan diubah.')}>
+                                    <option value="BELUM">BELUM DIMULAI</option>
+                                    <option value="AKTIF">AKTIF</option>
+                                    <option value="SELESAI">SELESAI</option>
+                                </select>
+                            </div>
+                            <div className={card + ' space-y-3'}>
+                                <h3 className="font-black text-slate-900 dark:text-white">Parameter Pos</h3>
+                                {posEdit.map(p => (
+                                    <div key={p.id} className="grid sm:grid-cols-12 gap-2 items-center border-b border-slate-200 dark:border-slate-700/60 pb-3">
+                                        <div className="sm:col-span-1 font-black text-yellow-600 dark:text-yellow-400">#{p.id}</div>
+                                        <input className={inp + ' sm:col-span-3'} value={p.title} onChange={e => upPos(p.id, 'title', e.target.value)} placeholder="Judul" />
+                                        <input className={inp + ' sm:col-span-4'} value={p.desc} onChange={e => upPos(p.id, 'desc', e.target.value)} placeholder="Deskripsi" />
+                                        <input className={inp + ' sm:col-span-2 uppercase'} value={p.code} onChange={e => upPos(p.id, 'code', e.target.value)} placeholder="Kode" />
+                                        <input type="number" className={inp + ' sm:col-span-1'} value={p.points} onChange={e => upPos(p.id, 'points', e.target.value)} placeholder="Poin" />
+                                        <button disabled={busy} className={btn + ' sm:col-span-1'} onClick={() => act('savePos', p, 'Pos ' + p.id + ' tersimpan.')} title="Simpan"><i className="fa-solid fa-floppy-disk"></i></button>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className={card + ' space-y-3'}>
+                                <h3 className="font-black text-slate-900 dark:text-white">Tambah / Ubah Regu</h3>
+                                <div className="grid sm:grid-cols-4 gap-2">
+                                    <input className={inp} value={rf.nama} onChange={e => setRf({ ...rf, nama: e.target.value })} placeholder="Nama regu" />
+                                    <input className={inp} value={rf.ketua} onChange={e => setRf({ ...rf, ketua: e.target.value })} placeholder="Ketua regu" />
+                                    <input className={inp} value={rf.anggota} onChange={e => setRf({ ...rf, anggota: e.target.value })} placeholder="Anggota (opsional)" />
+                                    <input className={inp} value={rf.pin} onChange={e => setRf({ ...rf, pin: e.target.value })} placeholder="PIN regu" />
+                                </div>
+                                <button disabled={busy || !rf.nama.trim()} className={btn} onClick={async () => { if (await act('saveRegu', rf, 'Regu tersimpan.')) setRf({ nama: '', ketua: '', anggota: '', pin: '' }); }}>
+                                    <i className="fa-solid fa-user-plus mr-2"></i>Simpan Regu
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Aplikasi Utama React
+        function App() {
+            // State Utama
+            const [role, setRole] = useState('PESERTA');
+            const [activeView, setActiveView] = useState('EXPLORE');
+            const [showCover, setShowCover] = useState(true);
+            const [notification, setNotification] = useState(null);
+            const [isOffline, setIsOffline] = useState(!navigator.onLine);
+            
+            // State Persisten (Menyimpan progres di LocalStorage)
+            const [teamData, setTeamData] = useState(() => JSON.parse(localStorage.getItem('scout_team')) || { name: 'Regu Elang', leader: 'Ketua Regu' });
+            const [points, setPoints] = useState(() => parseInt(localStorage.getItem('scout_points')) || 0);
+            const [badges, setBadges] = useState(() => JSON.parse(localStorage.getItem('scout_badges')) || []);
+            const [unlockedPos, setUnlockedPos] = useState(() => JSON.parse(localStorage.getItem('scout_unlocked')) || [1]);
+            const [completedPos, setCompletedPos] = useState(() => JSON.parse(localStorage.getItem('scout_completed')) || []);
+            
+            // Interaksi Pos
+            const [activePosId, setActivePosId] = useState(null);
+            const [scanModalOpen, setScanModalOpen] = useState(false);
+            const [inputCode, setInputCode] = useState('');
+            const [pendingUnlockPos, setPendingUnlockPos] = useState(null);
+
+            // Tambahan State UI & Pengaturan
+            const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('scout_theme') !== 'light');
+            const [isBatterySaver, setIsBatterySaver] = useState(() => localStorage.getItem('scout_battery') === 'true');
+            const [showCertificate, setShowCertificate] = useState(false);
+
+            // === State Koneksi Google Sheets ===
+            const [checkpoints, setCheckpoints] = useState(() => {
+                const c = LS.get('scout_config', null);
+                if (!GAS_READY) return defaultCheckpoints;
+                return (c && c.pos) ? c.pos : defaultCheckpoints.map(({ unlockCode, ...p }) => p);
+            });
+            const [cfgMeta, setCfgMeta] = useState(() => LS.get('scout_config', {}) || {});
+            const [reguList, setReguList] = useState(() => (LS.get('scout_config', {}) || {}).regu || []);
+            const [session, setSession] = useState(() => LS.get('scout_session', null));
+            const [gameStatus, setGameStatus] = useState('AKTIF');
+            const [syncState, setSyncState] = useState('idle');
+            const [pendingCount, setPendingCount] = useState(() => LS.get('scout_outbox', []).length);
+            const [loginForm, setLoginForm] = useState({ name: '', leader: '', pin: '' });
+            const [loginBusy, setLoginBusy] = useState(false);
+            const [adminAuth, setAdminAuth] = useState(() => { try { return JSON.parse(sessionStorage.getItem('scout_admin')); } catch (e) { return null; } });
+            const [pinModal, setPinModal] = useState(null);
+            const [pinInput, setPinInput] = useState('');
+            const sessionRef = useRef(session);
+            const syncRef = useRef(null);
+            const syncingRef = useRef(false);
+
+            useEffect(() => {
+                sessionRef.current = session;
+                LS.set('scout_session', session);
+                if (session) { const t = { name: session.name, leader: session.leader || '' }; setTeamData(t); LS.set('scout_team', t); }
+            }, [session]);
+
+            useEffect(() => { if (GAS_READY) loadConfig(); }, []);
+
+            // Sinkronisasi berkala (antrean offline + ambil status terbaru dari server)
+            useEffect(() => {
+                if (!GAS_READY || !session || role !== 'PESERTA') return;
+                syncRef.current && syncRef.current();
+                let n = 0;
+                const iv = setInterval(() => {
+                    syncRef.current && syncRef.current();
+                    if (++n % 10 === 0) loadConfig();
+                }, isBatterySaver ? 60000 : 30000);
+                return () => clearInterval(iv);
+            }, [session, role, isBatterySaver]);
+
+            // Simpan otomatis ke LocalStorage setiap ada perubahan progres
+            useEffect(() => {
+                localStorage.setItem('scout_points', points);
+                localStorage.setItem('scout_unlocked', JSON.stringify(unlockedPos));
+                localStorage.setItem('scout_completed', JSON.stringify(completedPos));
+                localStorage.setItem('scout_badges', JSON.stringify(badges));
+                localStorage.setItem('scout_theme', isDarkMode ? 'dark' : 'light');
+                localStorage.setItem('scout_battery', isBatterySaver);
+            }, [points, unlockedPos, completedPos, badges, isDarkMode, isBatterySaver]);
+
+            // Deteksi Koneksi Internet
+            useEffect(() => {
+                const handleOnline = () => { setIsOffline(false); syncRef.current && syncRef.current(); loadConfig(); };
+                const handleOffline = () => setIsOffline(true);
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+                return () => { 
+                    window.removeEventListener('online', handleOnline); 
+                    window.removeEventListener('offline', handleOffline); 
+                };
+            }, []);
+
+            // Fungsi Toast Notifikasi
+            const notify = (msg, type = 'success') => {
+                setNotification({ msg, type });
+                setTimeout(() => setNotification(null), 3500);
+            };
+
+            // Efek Suara Peluit (AudioContext)
+            const playWhistle = () => {
+                try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(1200, ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(1600, ctx.currentTime + 0.1);
+                    gain.gain.setValueAtTime(0, ctx.currentTime);
+                    gain.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.05);
+                    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.4);
+                } catch(e) { console.log("Audio API not supported"); }
+            };
+
+            // Unduh Sertifikat (Gambar)
+            const handleDownloadCertificate = async () => {
+                const element = document.getElementById('certificate-card');
+                if(!element) return;
+                try {
+                    const canvas = await html2canvas(element, { scale: 2, backgroundColor: null });
+                    const imgData = canvas.toDataURL('image/png');
+                    const link = document.createElement('a');
+                    link.download = `Sertifikat-${teamData.name}.png`;
+                    link.href = imgData;
+                    link.click();
+                    notify("Sertifikat berhasil diunduh!", "success");
+                } catch (err) {
+                    notify("Gagal mengunduh sertifikat.", "error");
+                }
+            };
+
+            // Fungsi Reset Data
+            const handleResetData = () => {
+                if(confirm('Yakin ingin mereset seluruh progres game di HP ini?' + (GAS_READY ? ' Progres yang sudah tersimpan di server tidak terhapus dan akan dimuat lagi saat Anda masuk regu.' : '') + (LS.get('scout_outbox', []).length ? ' PERHATIAN: ada data yang belum terkirim ke server dan akan hilang!' : ''))) {
+                    localStorage.clear(); setSession(null); setPendingCount(0);
+                    setPoints(0); setUnlockedPos([1]); setCompletedPos([]); setBadges([]); 
+                    notify('Data regu berhasil direset!', 'success');
+                }
+            };
+
+            // ===== Fungsi Sinkronisasi Google Sheets =====
+            const getOutbox = () => LS.get('scout_outbox', []);
+            const applyServerState = (st) => {
+                if (!st) return;
+                setPoints(st.points); setUnlockedPos(st.unlocked); setCompletedPos(st.completed); setBadges(st.badges);
+            };
+            const loadConfig = async () => {
+                try {
+                    const r = await gasGet({ action: 'config' });
+                    if (r.ok) { setCheckpoints(r.pos); setCfgMeta(r); setReguList(r.regu || []); setGameStatus(r.status || 'AKTIF'); LS.set('scout_config', r); }
+                } catch (e) {}
+            };
+            const syncNow = async () => {
+                const s = sessionRef.current;
+                if (!GAS_READY || !s || syncingRef.current || !navigator.onLine) return;
+                syncingRef.current = true; setSyncState('syncing');
+                try {
+                    const sent = getOutbox();
+                    const r = await gasPost({ action: 'sync', regu: s.name, pin: s.pin, events: sent });
+                    if (!r.ok) {
+                        if (r.auth === false) { notify(r.msg, 'error'); setSession(null); }
+                        throw new Error(r.msg);
+                    }
+                    const done = new Set(r.results.map(x => x.id));
+                    const rest = getOutbox().filter(e => !done.has(e.id));
+                    LS.set('scout_outbox', rest); setPendingCount(rest.length);
+                    r.results.filter(x => !x.ok).forEach(x => notify(x.msg || 'Data ditolak server.', 'error'));
+                    if (rest.length === 0) applyServerState(r.state);
+                    setGameStatus(r.status || 'AKTIF'); setSyncState('ok');
+                } catch (e) { setSyncState('error'); }
+                finally { syncingRef.current = false; }
+            };
+            syncRef.current = syncNow;
+
+            const pushEvent = (ev) => {
+                const ob = getOutbox();
+                ob.push({ id: 'E' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), ts: Date.now(), ...ev });
+                LS.set('scout_outbox', ob); setPendingCount(ob.length);
+                setTimeout(() => syncRef.current && syncRef.current(), 100);
+            };
+
+            const handleLogin = async () => {
+                const f = loginForm;
+                if (!f.name.trim()) { notify('Isi nama regu terlebih dahulu.', 'error'); return; }
+                setLoginBusy(true);
+                try {
+                    const r = await gasPost({ action: 'login', nama: f.name.trim(), ketua: f.leader.trim(), pin: f.pin.trim() });
+                    if (!r.ok) { notify(r.msg || 'Gagal masuk.', 'error'); return; }
+                    LS.set('scout_outbox', []); setPendingCount(0);
+                    setSession({ name: r.team.name, leader: r.team.leader, pin: f.pin.trim() });
+                    applyServerState(r.state); setGameStatus(r.status || 'AKTIF'); loadConfig();
+                    notify('Selamat datang, ' + r.team.name + '!', 'success');
+                } catch (e) { notify('Tidak bisa terhubung ke server. Periksa internet Anda.', 'error'); }
+                finally { setLoginBusy(false); }
+            };
+
+            const handleLogout = () => {
+                const n = getOutbox().length;
+                if (!confirm('Ganti regu? Data lokal di HP ini dibersihkan (progres tetap tersimpan di server).' + (n ? ' PERHATIAN: ' + n + ' data belum terkirim akan hilang!' : ''))) return;
+                LS.set('scout_outbox', []); setPendingCount(0);
+                setSession(null); setPoints(0); setUnlockedPos([1]); setCompletedPos([]); setBadges([]);
+            };
+
+            const switchRole = () => {
+                const r = ['PESERTA', 'PEMBINA', 'ADMIN'];
+                const next = r[(r.indexOf(role) + 1) % r.length];
+                if (next === 'PESERTA' || !GAS_READY) { setRole(next); return; }
+                if (adminAuth && adminAuth.level >= (next === 'ADMIN' ? 2 : 1)) { setRole(next); return; }
+                setPinInput(''); setPinModal(next);
+            };
+
+            const submitPin = async () => {
+                try {
+                    const r = await gasPost({ action: 'admin', op: 'auth', pin: pinInput.trim() });
+                    if (!r.ok || r.level < (pinModal === 'ADMIN' ? 2 : 1)) { notify('PIN salah atau tidak memiliki akses.', 'error'); return; }
+                    const a = { pin: pinInput.trim(), level: r.level };
+                    sessionStorage.setItem('scout_admin', JSON.stringify(a));
+                    setAdminAuth(a); setRole(pinModal); setPinModal(null); setPinInput('');
+                } catch (e) { notify('Gagal terhubung ke server.', 'error'); }
+            };
+
+            const handleSOS = async () => {
+                if (!window.confirm('Kirim panggilan SOS darurat ke Pembina?')) return;
+                notify("Panggilan SOS Darurat Diaktifkan!", "error");
+                if (!GAS_READY || !session) return;
+                const posAktif = unlockedPos.filter(i => !completedPos.includes(i))[0] || 7;
+                let loc = null;
+                try {
+                    if (navigator.geolocation) loc = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), rej, { timeout: 4000, maximumAge: 60000 }));
+                } catch (e) {}
+                pushEvent({ type: 'SOS', pos: posAktif, ...(loc || {}) });
+                notify(navigator.onLine ? 'SOS terkirim ke Pembina.' : 'SOS tersimpan & dikirim saat ada sinyal. Segera hubungi Pembina langsung!', navigator.onLine ? 'success' : 'error');
+            };
+
+            const gameClosedMsg = () => gameStatus === 'BELUM' ? 'Permainan belum dimulai oleh panitia.' : 'Permainan sudah ditutup oleh panitia.';
+
+            // Logika Membuka Kunci Pos via Kode Penjaga
+            const handleUnlockPos = async () => {
+                if (!pendingUnlockPos) return;
+                if (GAS_READY && gameStatus !== 'AKTIF') { notify(gameClosedMsg(), 'error'); return; }
+                const pos = checkpoints.find(p => p.id === pendingUnlockPos);
+                const code = inputCode.trim().toUpperCase();
+                let valid = false;
+                if (pos.unlockCode) valid = code === pos.unlockCode.toUpperCase();
+                else if (pos.hash && window.crypto && crypto.subtle) valid = (await sha256Hex((cfgMeta.salt || '') + ':' + code)) === pos.hash;
+                else { notify('Data pos belum termuat. Pastikan internet aktif dan aplikasi dibuka lewat HTTPS.', 'error'); return; }
+
+                if (valid) {
+                    if (!unlockedPos.includes(pendingUnlockPos)) {
+                        setUnlockedPos([...unlockedPos, pendingUnlockPos]);
+                    }
+                    setScanModalOpen(false);
+                    setInputCode('');
+                    setActivePosId(pendingUnlockPos); // Langsung buka misi
+                    playWhistle(); // Efek suara
+                    notify(`Berhasil membuka Kunci Pos ${pendingUnlockPos}!`, 'success');
+                    if (GAS_READY && session) pushEvent({ type: 'BUKA', pos: pendingUnlockPos, code });
+                } else {
+                    notify('Kode Akses / Barcode tidak valid!', 'error');
+                }
+            };
+
+            // Logika Menyelesaikan Misi Pos
+            const handleCompletePos = (posId, pointsEarned) => {
+                if (GAS_READY && gameStatus !== 'AKTIF') { notify(gameClosedMsg(), 'error'); setActivePosId(null); return; }
+                if (!completedPos.includes(posId)) {
+                    setCompletedPos([...completedPos, posId]);
+                    setPoints(prev => prev + pointsEarned);
+                    
+                    // Tambah lencana khusus (Simulasi)
+                    const badgeName = `Lencana Pos ${posId}`;
+                    if (!badges.includes(badgeName)) setBadges([...badges, badgeName]);
+                    
+                    // Efek Harta Karun di Pos 7
+                    if (posId === 7) {
+                        setTimeout(() => {
+                            if(window.confetti) window.confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, zIndex: 9999 });
+                            setShowCertificate(true);
+                        }, 500);
+                    }
+
+                    // Buka pos berikutnya otomatis (tapi statusnya masih Terkunci Barcode)
+                    const nextId = posId + 1;
+                    if (nextId <= 7 && !unlockedPos.includes(nextId)) {
+                        // Hanya di-unlock aksesnya, tapi tetap butuh scan QR
+                        setUnlockedPos([...unlockedPos, nextId]);
+                    }
+                    notify(`Misi Selesai! Regu Anda mendapat +${pointsEarned} PTS`, 'success');
+                    if (GAS_READY && session) pushEvent({ type: 'SELESAI', pos: posId });
+                }
+                setActivePosId(null);
+            };
+
+            return (
+                <div className={`${isDarkMode ? 'dark' : ''} ${isBatterySaver ? 'battery-saver' : ''}`}>
+                    <div className="min-h-screen bg-slate-50 dark:bg-[#0B1120] dark:bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] dark:from-slate-900 dark:via-[#0B1120] dark:to-black text-slate-800 dark:text-slate-300 font-sans selection:bg-yellow-500 selection:text-slate-900 relative overflow-hidden transition-colors duration-300 pb-20 sm:pb-0">
+                        
+                        {/* Header Navigasi Glassmorphism */}
+                        <header className="glass-header sticky top-0 z-40 shadow-md dark:shadow-xl bg-white/80 dark:bg-slate-950/70 border-b border-slate-200 dark:border-yellow-500/20">
+                            <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-4">
+                                <div className="flex items-center gap-3 w-full sm:w-auto justify-center sm:justify-start">
+                                    <i className="fa-solid fa-campground text-slate-900 dark:text-slate-100 text-xl sm:text-2xl"></i>
+                                    <div className="text-center sm:text-left">
+                                        <h1 className="text-lg sm:text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-200 tracking-tight">
+                                            DIGITAL SCOUT ADVENTURE
+                                        </h1>
+                                        <div className="text-[10px] text-slate-400 font-semibold tracking-widest uppercase">
+                                            MAN 1 Boalemo Season 4
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto">
+                                    {/* Pengaturan Tema & Baterai */}
+                                    <button onClick={() => setIsDarkMode(!isDarkMode)} className="px-3 py-2 bg-slate-200 dark:bg-slate-800 rounded-lg text-xs font-bold transition" title="Ganti Tema">
+                                        {isDarkMode ? <i className="fa-solid fa-sun text-yellow-400"></i> : <i className="fa-solid fa-moon text-slate-600"></i>}
+                                    </button>
+                                    <button onClick={() => setIsBatterySaver(!isBatterySaver)} className={`px-3 py-2 rounded-lg text-xs font-bold transition ${isBatterySaver ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'}`} title="Mode Hemat Baterai">
+                                        <i className="fa-solid fa-battery-half"></i>
+                                    </button>
+
+                                    {/* Peringatan Mode Offline */}
+                                {/* Peringatan Mode Offline */}
+                                {isOffline && (
+                                    <span className="px-2 py-1.5 bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/50 rounded-lg text-[10px] font-bold animate-pulse flex items-center gap-1">
+                                        <i className="fa-solid fa-wifi-slash"></i> Offline Mode
+                                    </span>
+                                )}
+                                
+                                {GAS_READY && role === 'PESERTA' && session && (
+                                    <span className={`px-2 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 border ${syncState === 'error' ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/40' : pendingCount > 0 ? 'bg-yellow-100 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-500/30' : 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30'}`} title="Status sinkronisasi ke Google Sheets">
+                                        <i className={`fa-solid ${syncState === 'syncing' ? 'fa-rotate fa-spin' : pendingCount > 0 ? 'fa-cloud-arrow-up' : syncState === 'error' ? 'fa-cloud-bolt' : 'fa-cloud'}`}></i>
+                                        {syncState === 'syncing' ? 'Sinkron...' : pendingCount > 0 ? `${pendingCount} antrean` : syncState === 'error' ? 'Gagal sinkron' : 'Tersinkron'}
+                                    </span>
+                                )}
+                                <button onClick={() => setShowCover(true)} className="px-3 py-1.5 bg-yellow-100 dark:bg-yellow-500/10 border border-yellow-300 dark:border-yellow-500/30 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-200 dark:hover:bg-yellow-500/20 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow-sm">
+                                    <i className="fa-solid fa-flag"></i> Cover
+                                </button>
+
+                                {role === 'PESERTA' && (
+                                    <div className="hidden sm:flex items-center gap-2">
+                                        <button onClick={() => setActiveView('EXPLORE')} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm ${activeView === 'EXPLORE' ? 'bg-yellow-500 text-slate-950 shadow-yellow-500/30' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-slate-800'}`}>
+                                            <i className="fa-solid fa-map-location-dot"></i> Peta
+                                        </button>
+                                        <button onClick={handleSOS} className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 pulse-sos shadow-lg shadow-red-600/30">
+                                            <i className="fa-solid fa-triangle-exclamation"></i> SOS
+                                        </button>
+                                    </div>
+                                )}
+                                
+                                {(role === 'PEMBINA' || role === 'ADMIN') && (
+                                    <button className="px-3 py-1.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-lg">
+                                        <i className="fa-solid fa-laptop-code"></i> {role === 'PEMBINA' ? 'Dashboard Pembina' : 'Panel Panitia'}
+                                    </button>
+                                )}
+
+                                {/* Reset & Switcher */}
+                                <button onClick={handleResetData} className="px-2.5 py-1.5 bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-500 hover:text-red-500 rounded-lg text-xs transition" title="Reset Sesi Perangkat">
+                                    <i className="fa-solid fa-rotate-right"></i>
+                                </button>
+                                <button onClick={switchRole} className="px-3 py-1.5 bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-yellow-600 dark:hover:text-yellow-400 rounded-lg text-xs font-medium transition" title="Ganti Mode">
+                                    <i className="fa-solid fa-user-gear"></i> {role}
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Area Konten Utama */}
+                    <main className="max-w-6xl mx-auto px-4 py-6">
+                        {GAS_READY && role === 'PESERTA' && gameStatus !== 'AKTIF' && (
+                            <div className="mb-4 p-3 rounded-xl bg-yellow-100 dark:bg-yellow-500/10 border border-yellow-300 dark:border-yellow-500/30 text-xs font-bold text-yellow-800 dark:text-yellow-300 flex items-center gap-2">
+                                <i className="fa-solid fa-hourglass-half"></i> {gameStatus === 'BELUM' ? 'Permainan belum dimulai oleh panitia.' : 'Permainan telah ditutup oleh panitia.'}
+                            </div>
+                        )}
+                        
+                        {/* VIEW: PETA PENJELAJAHAN (PESERTA) */}
+                        {role === 'PESERTA' && activeView === 'EXPLORE' && (
+                            <div className="space-y-6">
+                                {/* Banner Status Regu */}
+                                <div className="bg-white/80 dark:bg-slate-900/60 backdrop-blur-md p-4 rounded-2xl border border-slate-200 dark:border-slate-700/60 flex flex-wrap justify-between items-center gap-4 shadow-lg animate-fade-in-up">
+                                    <div>
+                                        <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">Regu: <span className="text-yellow-600 dark:text-yellow-400">{teamData.name}</span></h2>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Total Poin: <strong className="text-emerald-600 dark:text-emerald-400 text-sm">{points} PTS</strong> | Lencana: {badges.length}</p>
+                                        {GAS_READY && session && (<button onClick={handleLogout} className="mt-1 text-[10px] font-bold text-slate-500 dark:text-slate-400 hover:text-yellow-600 dark:hover:text-yellow-400 underline"><i className="fa-solid fa-right-from-bracket"></i> Ganti Regu</button>)}
+                                    </div>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {badges.map((b, i) => (
+                                            <span key={i} className="px-2 py-1 rounded-lg bg-yellow-100 dark:bg-yellow-500/20 border border-yellow-300 dark:border-yellow-500/50 flex items-center gap-1.5 text-yellow-700 dark:text-yellow-400 text-xs shadow-sm font-bold" title={b}>
+                                                <i className="fa-solid fa-medal"></i> Pos {i+1}
+                                            </span>
+                                        ))}
+                                        {completedPos.length === 7 && (
+                                            <button onClick={() => setShowCertificate(true)} className="px-3 py-1 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-lg text-xs font-bold shadow-md hover:scale-105 transition">
+                                                <i className="fa-solid fa-certificate"></i> Lihat Sertifikat
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* UI Peta Harta Karun Interaktif */}
+                                <div className="relative w-full aspect-square sm:aspect-[21/9] bg-[#eef2e6] dark:bg-[#1a2e1d] rounded-3xl overflow-hidden border-4 border-slate-300 dark:border-slate-700/80 shadow-2xl animate-fade-in-up">
+                                    <div className="absolute inset-0 opacity-20 dark:opacity-20" style={{ backgroundImage: 'radial-gradient(#854d0e 1.5px, transparent 0)', backgroundSize: '40px 40px' }}></div>
+                                    
+                                    <svg className="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none">
+                                        <path d="M 10% 80% Q 30% 70% 20% 50% T 50% 50% T 70% 30% T 90% 20%" fill="none" stroke="rgba(133, 77, 14, 0.4)" strokeWidth="4" strokeLinecap="round" className="map-line" />
+                                    </svg>
+
+                                    {/* Titik Posisi Pos */}
+                                    {[
+                                        { id: 1, left: '10%', top: '80%' }, { id: 2, left: '20%', top: '50%' },
+                                        { id: 3, left: '40%', top: '65%' }, { id: 4, left: '50%', top: '50%' },
+                                        { id: 5, left: '60%', top: '25%' }, { id: 6, left: '70%', top: '45%' },
+                                        { id: 7, left: '90%', top: '20%' }
+                                    ].map(posLoc => {
+                                        const isUnlocked = unlockedPos.includes(posLoc.id);
+                                        const isCompleted = completedPos.includes(posLoc.id);
+                                        const posData = checkpoints.find(p => p.id === posLoc.id);
+                                        return (
+                                            <div key={posLoc.id} className="absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer" style={{ left: posLoc.left, top: posLoc.top }}
+                                                onClick={() => {
+                                                    if(isCompleted) notify("Pos ini sudah diselesaikan.", "success");
+                                                    else if(isUnlocked) { setPendingUnlockPos(posLoc.id); setScanModalOpen(true); }
+                                                    else notify("Pos masih terkunci! Anda harus menyelesaikan pos sebelumnya.", "error");
+                                                }}>
+                                                <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full border-4 flex items-center justify-center text-sm sm:text-lg font-bold shadow-xl transition-transform transform group-hover:scale-110 relative z-10 
+                                                    ${isCompleted ? 'bg-emerald-500 border-emerald-700 text-white' : 
+                                                    isUnlocked ? 'bg-yellow-400 border-yellow-600 text-slate-900 animate-bounce shadow-yellow-500/50' : 'bg-slate-300 dark:bg-slate-800 border-slate-400 dark:border-slate-900 text-slate-500'}`}>
+                                                    {isCompleted && posLoc.id === 7 ? <i className="fa-solid fa-box-open"></i> : isCompleted ? <i className="fa-solid fa-check"></i> : isUnlocked ? <i className="fa-solid fa-map-pin"></i> : <i className="fa-solid fa-lock"></i>}
+                                                </div>
+                                                <div className="mt-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700/50 text-[10px] font-bold text-center w-max opacity-0 group-hover:opacity-100 transition-opacity absolute top-12 sm:top-14 pointer-events-none z-20 shadow-lg text-slate-800 dark:text-white">
+                                                    Pos {posLoc.id}: {posData?.title}
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* VIEW: DASHBOARD PEMBINA / PANEL PANITIA (terhubung Google Sheets) */}
+                        {GAS_READY && adminAuth && (role === 'PEMBINA' || role === 'ADMIN') && (
+                            <AdminPanel auth={adminAuth} canAdmin={role === 'ADMIN' && adminAuth.level >= 2} notify={notify} />
+                        )}
+
+                        {/* VIEW: ADMIN & PEMBINA (Dashboard Placeholder Ringkas) */}
+                        {(role === 'PEMBINA' || role === 'ADMIN') && !(GAS_READY && adminAuth) && (
+                            <div className="bg-white/80 dark:bg-slate-900/60 backdrop-blur-md p-10 rounded-3xl border border-slate-200 dark:border-slate-700/60 shadow-2xl text-center space-y-5 animate-fade-in-up mt-10">
+                                <i className="fa-solid fa-laptop-code text-6xl text-emerald-500 mb-2"></i>
+                                <h2 className="text-2xl font-black text-slate-900 dark:text-white">Sistem Aktif - Area {role}</h2>
+                                <p className="text-slate-600 dark:text-slate-400 max-w-lg mx-auto leading-relaxed">
+                                    Simulasi akses. Di versi server penuh, halaman ini berisi Peta Live Pemantauan Regu, Panel Scanner Penjaga Pos (Validasi tanpa kertas), dan pengaturan parameter Pos dinamis.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* --- MODAL MASUK REGU (terhubung Google Sheets) --- */}
+                        {GAS_READY && role === 'PESERTA' && !session && !showCover && (
+                            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+                                <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-6 space-y-4 border border-slate-200 dark:border-slate-700 animate-fade-in-up shadow-2xl">
+                                    <div className="text-center">
+                                        <i className="fa-solid fa-people-group text-4xl text-yellow-500 mb-2"></i>
+                                        <h3 className="text-xl font-black text-slate-900 dark:text-white">Masuk Regu</h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Pilih atau ketik nama regu dan isi PIN dari panitia. Regu baru: buat PIN sendiri (min. 4 karakter).</p>
+                                    </div>
+                                    <input list="regu-list" value={loginForm.name} onChange={e => setLoginForm({ ...loginForm, name: e.target.value })} maxLength={40} placeholder="Nama Regu (mis. Regu Elang)" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" />
+                                    <datalist id="regu-list">{reguList.map(n => <option key={n} value={n} />)}</datalist>
+                                    <input value={loginForm.leader} onChange={e => setLoginForm({ ...loginForm, leader: e.target.value })} maxLength={40} placeholder="Nama Ketua Regu" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" />
+                                    <input type="password" value={loginForm.pin} onChange={e => setLoginForm({ ...loginForm, pin: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleLogin()} maxLength={20} placeholder="PIN Regu" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-center text-yellow-600 dark:text-yellow-400 font-bold tracking-widest px-4 py-3 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" />
+                                    <button disabled={loginBusy} onClick={handleLogin} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-black rounded-xl shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2">
+                                        <i className={`fa-solid ${loginBusy ? 'fa-spinner fa-spin' : 'fa-right-to-bracket'}`}></i> {loginBusy ? 'MEMPROSES...' : 'MASUK'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- MODAL PIN PEMBINA / PANITIA --- */}
+                        {pinModal && (
+                            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+                                <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-6 space-y-4 border border-slate-200 dark:border-slate-700 animate-fade-in-up shadow-2xl">
+                                    <h3 className="text-lg font-black text-center text-slate-900 dark:text-white"><i className="fa-solid fa-lock text-yellow-500 mr-2"></i>Akses {pinModal === 'ADMIN' ? 'Panel Panitia' : 'Dashboard Pembina'}</h3>
+                                    <input type="password" autoFocus value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && submitPin()} placeholder="Masukkan PIN" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-center text-yellow-600 dark:text-yellow-400 font-bold tracking-widest py-3.5 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" />
+                                    <button onClick={submitPin} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl shadow-lg transition active:scale-95">MASUK</button>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setPinModal(null)} className="flex-1 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold">BATAL</button>
+                                        {role !== 'PESERTA' && <button onClick={() => { setPinModal(null); setRole('PESERTA'); }} className="flex-1 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold">MODE PESERTA</button>}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- MODAL LAYAR COVER MAN 1 BOALEMO --- */}
+                        {showCover && (
+                            <div className="fixed inset-0 bg-[#0B1120] z-50 flex items-center justify-center p-4">
+                                {/* Latar Belakang Gambar Kegiatan */}
+                                <div className="absolute inset-0 bg-[url('watermarked_img_16772950184483403373.jpg')] bg-cover bg-center opacity-20"></div>
+                                <div className="absolute inset-0 bg-gradient-to-t from-[#0B1120] via-[#0B1120/80] to-transparent"></div>
+                                
+                                <div className="relative z-10 max-w-lg w-full text-center space-y-6 animate-fade-in-up">
+                                    <div className="floating">
+                                        <h3 className="text-yellow-500 font-extrabold tracking-widest uppercase text-sm mb-2 drop-shadow-md">Kemah Kerja Madrasah</h3>
+                                        <h1 className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300 drop-shadow-2xl mb-1">
+                                            MAN 1 BOALEMO
+                                        </h1>
+                                        <div className="text-emerald-400 font-bold tracking-[0.2em] text-xs">SEASON 4 TAHUN 2026</div>
+                                    </div>
+
+                                    <div className="bg-slate-900/40 backdrop-blur-lg p-6 sm:p-8 rounded-3xl border border-slate-700/50 shadow-2xl relative overflow-hidden">
+                                        {/* Elemen Dekoratif */}
+                                        <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-500/10 rounded-full blur-3xl"></div>
+                                        <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
+                                        
+                                        <div className="text-5xl mb-4 fire-flicker relative z-10">🔥</div>
+                                        <h2 className="text-2xl font-black text-white mb-2 relative z-10">DIGITAL SCOUT ADVENTURE</h2>
+                                        <p className="text-yellow-500 text-sm font-medium italic relative z-10">"Jelajahi Alam, Pecahkan Tantangan, Temukan Jejak!"</p>
+                                        
+                                        <div className="mt-6 space-y-3 text-left text-xs sm:text-sm text-slate-200 font-medium relative z-10 border-t border-slate-700/50 pt-5">
+                                            <div className="flex items-start gap-3"><i className="fa-solid fa-compass text-emerald-400 mt-0.5"></i> Meningkatkan Pengetahuan Kepramukaan & Navigasi</div>
+                                            <div className="flex items-start gap-3"><i className="fa-solid fa-users-gear text-emerald-400 mt-0.5"></i> Melatih Kemampuan Memecahkan Masalah & Kerja Sama Regu</div>
+                                            <div className="flex items-start gap-3"><i className="fa-solid fa-hands-praying text-emerald-400 mt-0.5"></i> Menanamkan Nilai-nilai Dasa Darma Pramuka</div>
+                                        </div>
+                                    </div>
+
+                                    <button onClick={() => setShowCover(false)} className="w-full sm:w-auto px-10 py-4 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-400 hover:to-yellow-500 text-slate-900 font-black rounded-full shadow-[0_0_20px_rgba(234,179,8,0.3)] hover:shadow-[0_0_30px_rgba(234,179,8,0.6)] transition transform hover:-translate-y-1 active:scale-95 flex items-center justify-center gap-3 mx-auto text-lg border-2 border-yellow-300">
+                                        MULAI PETUALANGAN <i className="fa-solid fa-play"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- MODAL SCANNER QR CODE PENJAGA POS --- */}
+                        {scanModalOpen && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+                                <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-6 space-y-6 border border-slate-200 dark:border-slate-700 animate-fade-in-up shadow-2xl text-center relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-yellow-500"></div>
+                                    <h3 className="text-xl font-bold text-slate-900 dark:text-white">Validasi Pos {pendingUnlockPos}</h3>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Scan QR Code atau minta Kode Akses dari Penjaga Pos untuk membuka misi ini.</p>
+                                    
+                                    <div className="w-48 h-48 mx-auto bg-slate-100 dark:bg-slate-950 rounded-2xl border-4 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group shadow-inner">
+                                        <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500 opacity-60 animate-[scan_2s_ease-in-out_infinite] shadow-[0_0_10px_#10b981]"></div>
+                                        <i className="fa-solid fa-qrcode text-6xl text-slate-400 dark:text-slate-600 mb-3 group-hover:text-emerald-500 transition-colors"></i>
+                                        <p className="text-[10px] text-slate-500 font-bold px-4 uppercase tracking-widest">Kamera Aktif</p>
+                                        <style>{`@keyframes scan { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }`}</style>
+                                    </div>
+                                    
+                                    <div className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest flex items-center gap-2">
+                                        <div className="h-px bg-slate-200 dark:bg-slate-700 flex-1"></div>
+                                        ATAU
+                                        <div className="h-px bg-slate-200 dark:bg-slate-700 flex-1"></div>
+                                    </div>
+                                    
+                                    <div className="space-y-3">
+                                        <input type="text" value={inputCode} onChange={e => setInputCode(e.target.value)} placeholder="KODE AKSES MANUAL..." className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-center text-yellow-600 dark:text-yellow-400 font-bold tracking-widest py-3.5 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none uppercase placeholder-slate-400 dark:placeholder-slate-600" />
+                                        <button onClick={handleUnlockPos} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2">
+                                            <i className="fa-solid fa-unlock-keyhole"></i> BUKA KUNCI POS
+                                        </button>
+                                        <button onClick={() => { setScanModalOpen(false); setInputCode(''); }} className="w-full py-3 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold transition">
+                                            KEMBALI KE PETA
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- MODAL PENYELESAIAN MISI POS --- */}
+                        {activePosId && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
+                                <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-6 border border-slate-200 dark:border-slate-700 animate-fade-in-up shadow-2xl relative my-auto">
+                                    
+                                    <div className="text-center space-y-3">
+                                        <div className="inline-flex px-4 py-1.5 bg-yellow-100 dark:bg-yellow-500/20 border border-yellow-300 dark:border-yellow-500/50 text-yellow-700 dark:text-yellow-400 rounded-full text-xs font-black tracking-widest uppercase">
+                                            MISI POS {activePosId}
+                                        </div>
+                                        <h2 className="text-3xl font-black text-slate-900 dark:text-white">
+                                            {checkpoints.find(p=>p.id===activePosId)?.title}
+                                            {activePosId === 7 && <span className="ml-2">🎁</span>}
+                                        </h2>
+                                        <p className="text-sm text-slate-600 dark:text-slate-300 font-medium">{checkpoints.find(p=>p.id===activePosId)?.desc}</p>
+                                    </div>
+
+                                    <div className="bg-slate-50 dark:bg-slate-950 rounded-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 text-center shadow-inner">
+                                        <div className="w-20 h-20 mx-auto bg-slate-200 dark:bg-slate-800 rounded-full flex items-center justify-center border-2 border-slate-300 dark:border-slate-700 mb-6">
+                                            <i className="fa-solid fa-puzzle-piece text-4xl text-emerald-500"></i>
+                                        </div>
+                                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                                            Kerjakan instruksi penjaga pos dengan kompak. Setelah tugas diselesaikan dengan baik, Pembina akan mengizinkan Anda untuk menyelesaikan misi di aplikasi.
+                                        </p>
+                                        
+                                        <button onClick={() => {
+                                            const pos = checkpoints.find(p=>p.id===activePosId);
+                                            handleCompletePos(activePosId, pos.points);
+                                        }} className="w-full py-4 bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black rounded-xl shadow-[0_0_15px_rgba(234,179,8,0.3)] transition transform hover:-translate-y-1 active:scale-95 flex items-center justify-center gap-2 text-sm">
+                                            <i className="fa-solid fa-flag-checkered"></i> KONFIRMASI MISI SELESAI
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* --- MODAL SERTIFIKAT --- */}
+                        {showCertificate && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
+                                <div className="max-w-xl w-full space-y-4 animate-fade-in-up my-auto">
+                                    {/* Area yang akan didownload (Certificate Card) */}
+                                    <div id="certificate-card" className="bg-white text-slate-900 rounded-2xl p-8 relative overflow-hidden shadow-2xl border-8 border-double border-yellow-600 text-center">
+                                        <div className="absolute top-0 left-0 w-full h-full bg-[url('watermarked_img_16772950184483403373.jpg')] bg-cover bg-center opacity-10"></div>
+                                        <div className="relative z-10 space-y-4">
+                                            <i className="fa-solid fa-award text-6xl text-yellow-500 drop-shadow-md"></i>
+                                            <div>
+                                                <h3 className="text-emerald-700 font-bold tracking-widest text-sm uppercase">Sertifikat Penghargaan</h3>
+                                                <h1 className="text-3xl font-black text-slate-900 mt-1">DIGITAL SCOUT ADVENTURE</h1>
+                                                <p className="text-xs font-semibold text-slate-500">MAN 1 BOALEMO SEASON 4</p>
+                                            </div>
+                                            
+                                            <div className="py-4">
+                                                <p className="text-sm text-slate-600 mb-1">Diberikan kepada Regu:</p>
+                                                <h2 className="text-2xl font-bold text-yellow-600 bg-yellow-50 inline-block px-6 py-2 rounded-lg border border-yellow-200">{teamData.name}</h2>
+                                            </div>
+                                            
+                                            <div className="flex justify-center gap-6 pb-2">
+                                                <div className="text-center">
+                                                    <div className="text-3xl font-black text-emerald-600">{points}</div>
+                                                    <div className="text-[10px] font-bold uppercase text-slate-400">Total Poin</div>
+                                                </div>
+                                                <div className="text-center">
+                                                    <div className="text-3xl font-black text-blue-600">{badges.length}</div>
+                                                    <div className="text-[10px] font-bold uppercase text-slate-400">Lencana</div>
+                                                </div>
+                                            </div>
+                                            
+                                            <p className="text-[10px] text-slate-500 italic max-w-xs mx-auto border-t border-slate-200 pt-4">
+                                                Telah berhasil menyelesaikan seluruh misi penjelajahan dengan gemilang.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex gap-3">
+                                        <button onClick={handleDownloadCertificate} className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-2">
+                                            <i className="fa-solid fa-download"></i> Unduh PDF/JPG
+                                        </button>
+                                        <button onClick={() => setShowCertificate(false)} className="px-6 py-4 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-700 transition">
+                                            Tutup
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                    </main>
+
+                    {/* --- BOTTOM NAVIGATION BAR (MOBILE FIRST) --- */}
+                    {role === 'PESERTA' && (
+                        <div className="sm:hidden fixed bottom-0 left-0 w-full bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex items-center justify-around py-3 px-2 z-40 pb-safe shadow-[0_-10px_20px_rgba(0,0,0,0.1)]">
+                            <button onClick={() => setActiveView('EXPLORE')} className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition ${activeView === 'EXPLORE' ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}>
+                                <i className="fa-solid fa-map-location-dot text-xl"></i>
+                                <span className="text-[10px] uppercase tracking-wider">Peta Jalur</span>
+                            </button>
+                            
+                            {completedPos.length === 7 && (
+                                <button onClick={() => setShowCertificate(true)} className="flex flex-col items-center gap-1.5 p-2 rounded-xl text-emerald-600 dark:text-emerald-400 font-bold animate-bounce">
+                                    <i className="fa-solid fa-award text-xl"></i>
+                                    <span className="text-[10px] uppercase tracking-wider">Sertifikat</span>
+                                </button>
+                            )}
+
+                            <button onClick={handleSOS} className="flex flex-col items-center gap-1.5 p-2 rounded-xl text-red-500 hover:text-red-400 font-bold pulse-sos relative -top-3 bg-white dark:bg-slate-900 border-4 border-[#eef2e6] dark:border-[#1a2e1d] w-16 h-16 justify-center shadow-lg">
+                                <i className="fa-solid fa-triangle-exclamation text-2xl"></i>
+                                <span className="text-[9px] uppercase tracking-wider">SOS</span>
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Toast Notification */}
+                    {notification && (
+                        <div className={`fixed bottom-24 sm:bottom-6 left-1/2 transform -translate-x-1/2 px-6 py-3.5 rounded-xl shadow-2xl text-sm font-bold flex items-center gap-3 z-[60] animate-fade-in-up border ${notification.type === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/90 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/50' : 'bg-red-100 dark:bg-red-950/90 text-red-700 dark:text-red-400 border-red-300 dark:border-red-500/50'} backdrop-blur-md`}>
+                            <i className={`fa-solid ${notification.type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}`}></i>
+                            {notification.msg}
+                        </div>
+                    )}
+                </div>
+            </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
